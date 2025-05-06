@@ -1,3 +1,4 @@
+# -----------------------------  app.py  ---------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,296 +9,322 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.decomposition import PCA
 from sklearn.svm import SVC
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, precision_score, recall_score
+from sklearn.metrics import (classification_report, confusion_matrix,
+                             accuracy_score, precision_score, recall_score)
 import io
 
-# Set page config
-st.set_page_config(
-    page_title="Airline Satisfaction SVM",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# ------------------------------------------------------------------ #
+# Streamlit page set-up
+# ------------------------------------------------------------------ #
+st.set_page_config(page_title="Airline Satisfaction SVM",
+                   layout="wide",
+                   initial_sidebar_state="expanded")
 
-def fix_dataframe_types(df):
-    """Convert DataFrame columns to Arrow-compatible types"""
+# ------------------------------------------------------------------ #
+# Helper utilities
+# ------------------------------------------------------------------ #
+def fix_dataframe_types(df: pd.DataFrame) -> pd.DataFrame:
+    """Cast dtypes so that Arrow / Streamlit do not choke on mixed types."""
     df = df.copy()
-    for col in df.select_dtypes(include=['object']).columns:
-        df[col] = df[col].astype('str')
-    for col in df.select_dtypes(include=['int64']).columns:
-        df[col] = df[col].astype('float64')
-    if 'Gender' in df.columns:
-        df['Gender'] = df['Gender'].map({'Female': 0, 'Male': 1}).astype('float64')
+    # strings
+    for c in df.select_dtypes(include=["object", "string"]).columns:
+        df[c] = df[c].astype("string")
+    # ints to floats (Arrow limitation)
+    for c in df.select_dtypes(include=["int64", "Int64"]).columns:
+        df[c] = df[c].astype("float64")
+    # specific known conversion
+    if "Gender" in df.columns:
+        df["Gender"] = df["Gender"].map({"Female": 0, "Male": 1}).astype("float64")
     return df
 
-def safe_dataframe_display(df, max_rows=5):
-    """Safely display DataFrame with type conversion"""
-    display_df = fix_dataframe_types(df.head(max_rows))
-    st.dataframe(display_df)
 
-# Session state initialization
-for k in [
-    'train_df', 'test_df', 'X_train_pca', 'X_test_pca', 'y_train', 'y_test', 
-    'model', 'cleaned_train', 'cleaned_test', 'selected_features', 'X_test_eval', 'y_test_eval'
-]:
-    if k not in st.session_state:
-        st.session_state[k] = None
+def safe_dataframe_display(df: pd.DataFrame, max_rows: int = 5) -> None:
+    st.dataframe(fix_dataframe_types(df.head(max_rows)))
 
-# Robust boxplot function, now SAFE for 1 or more numeric columns
-def plot_boxplots(df, title):
-    numeric_cols = df.select_dtypes(include=np.number).columns
-    n = len(numeric_cols)
-    if n == 0:
-        st.warning("No numeric columns to plot")
-        return
-    
-    # Remove columns with all NaN or only one unique value
-    cols_to_plot = [c for c in numeric_cols if df[c].nunique(dropna=True) > 1 and df[c].notnull().sum() > 1]
-    if not cols_to_plot:
-        st.warning("Not enough numeric columns with >1 unique value for boxplots.")
-        return
 
-    n_plot = len(cols_to_plot)
-    cols_per_row = 3
-    nrows = int(np.ceil(n_plot / cols_per_row))
-    fig, axes = plt.subplots(nrows=nrows, ncols=cols_per_row, figsize=(5 * cols_per_row, 5 * nrows))
-    # Ensure axes is always 2D array for consistent indexing
-    if nrows == 1 and cols_per_row == 1:
-        axes = np.array([[axes]])
-    elif nrows == 1:
-        axes = np.expand_dims(axes, 0)
-    elif cols_per_row == 1:
-        axes = np.expand_dims(axes, 1)
-
-    axes_flat = axes.flatten()
-    for i, col in enumerate(cols_to_plot):
-        sns.boxplot(y=df[col], ax=axes_flat[i])
-        axes_flat[i].set_title(col)
-    # Hide any unused axes
-    for i in range(n_plot, len(axes_flat)):
-        axes_flat[i].set_axis_off()
-
-    fig.suptitle(title)
-    st.pyplot(fig)
-    plt.close(fig)
-
-def preprocess_data(df, missing_strategy='mean', missing_value=None, outlier_strategy='remove', outlier_threshold=1.5):
+def preprocess_data(df: pd.DataFrame,
+                    missing_strategy: str = "mean",
+                    missing_value=None,
+                    outlier_strategy: str = "remove",
+                    outlier_threshold: float = 1.5) -> pd.DataFrame:
+    """Missing values + categorical encoding + outlier handling (IQR)."""
     df = fix_dataframe_types(df.copy())
-    df.drop(columns=[col for col in df.columns if "Unnamed" in col], inplace=True)
+    df.drop(columns=[c for c in df.columns if "Unnamed" in c], inplace=True)
 
-    # Missing value handling
-    missing_cols = df.columns[df.isnull().any()].tolist()
-    if missing_cols:
-        if missing_strategy == 'delete':
+    # ---- missing values --------------------------------------------------
+    miss_cols = df.columns[df.isnull().any()].tolist()
+    if miss_cols:
+        if missing_strategy == "delete":
             df = df.dropna()
-        elif missing_strategy in ['mean', 'median']:
-            for col in missing_cols:
-                if pd.api.types.is_numeric_dtype(df[col]):
-                    fill_value = df[col].mean() if missing_strategy == 'mean' else df[col].median()
+        elif missing_strategy in ("mean", "median"):
+            for c in miss_cols:
+                if missing_strategy == "mean":
+                    fill = df[c].mean()
                 else:
-                    fill_value = df[col].mode().dropna().iloc[0] if not df[col].mode().empty else ""
-                df[col] = df[col].fillna(fill_value)
-        elif missing_strategy == 'specific':
-            for col in missing_cols:
-                df[col] = df[col].fillna(missing_value)
+                    fill = df[c].median()
+                df[c] = df[c].fillna(fill)
+        elif missing_strategy == "specific":
+            for c in miss_cols:
+                df[c] = df[c].fillna(missing_value)
 
-    # Encode object columns
-    for col in df.select_dtypes(include='object').columns:
+    # ---- encode categoricals --------------------------------------------
+    for c in df.select_dtypes(include="object").columns:
         le = LabelEncoder()
         try:
-            df[col] = le.fit_transform(df[col].astype(str))
+            df[c] = le.fit_transform(df[c].astype(str))
         except Exception:
-            df[col] = df[col].astype('category').cat.codes
+            # fallback
+            df[c] = df[c].astype("category").cat.codes
 
-    # Outlier handling (IQR)
-    numeric_cols = df.select_dtypes(include=np.number).columns
-    if outlier_strategy != 'ignore':
-        for col in numeric_cols:
-            q1 = df[col].quantile(0.25)
-            q3 = df[col].quantile(0.75)
+    # ---- outlier processing (IQR) ---------------------------------------
+    if outlier_strategy != "ignore":
+        for c in df.select_dtypes(include=np.number).columns:
+            q1, q3 = df[c].quantile([0.25, 0.75])
             iqr = q3 - q1
-            lower = q1 - outlier_threshold * iqr
-            upper = q3 + outlier_threshold * iqr
-            if outlier_strategy == 'remove':
-                df = df[(df[col] >= lower) & (df[col] <= upper)]
-            elif outlier_strategy == 'cap':
-                df[col] = df[col].clip(lower, upper)
+            low, high = q1 - outlier_threshold * iqr, q3 + outlier_threshold * iqr
+            if outlier_strategy == "remove":
+                df = df[(df[c] >= low) & (df[c] <= high)]
+            elif outlier_strategy == "cap":
+                df[c] = df[c].clip(low, high)
+
     return fix_dataframe_types(df)
 
-# Sidebar Navigation
-pages = [
-    "1. Upload Data",
-    "2. EDA",
-    "3. Data Cleaning",
-    "4. Dimensionality Reduction",
-    "5. Model Building",
-    "6. Evaluation",
-]
 
-page = st.sidebar.radio("Navigation", pages, index=0)
+def plot_boxplots(df: pd.DataFrame, title: str) -> None:
+    """Robust box-plot grid that skips empty columns."""
+    # keep only numeric columns with at least one finite value
+    numeric_cols = [c for c in df.select_dtypes(include=np.number).columns
+                    if np.isfinite(df[c]).sum() > 0]
 
-# PAGE 1: Upload Data
+    if not numeric_cols:
+        st.warning("No numeric columns with valid data to plot.")
+        return
+
+    n = len(numeric_cols)
+    cols_per_row = 3
+    rows = (n + cols_per_row - 1) // cols_per_row
+    fig, axes = plt.subplots(rows, cols_per_row,
+                             figsize=(15, 4 * rows),
+                             squeeze=False)
+    axes = axes.flatten()
+
+    for idx, col in enumerate(numeric_cols):
+        sns.boxplot(y=df[col], ax=axes[idx])
+        axes[idx].set_title(col)
+
+    # turn off unused axes
+    for j in range(len(numeric_cols), len(axes)):
+        axes[j].axis("off")
+
+    fig.suptitle(title, y=1.02)
+    st.pyplot(fig)
+
+
+# ------------------------------------------------------------------ #
+# Session-state placeholders
+# ------------------------------------------------------------------ #
+for k in (
+        "train_df", "test_df",
+        "cleaned_train", "cleaned_test",
+        "X_train_pca", "X_test_pca",
+        "y_train", "y_test",
+        "model"):
+    st.session_state.setdefault(k, None)
+
+# ------------------------------------------------------------------ #
+# Sidebar navigation
+# ------------------------------------------------------------------ #
+PAGES = ["1. Upload Data", "2. EDA", "3. Data Cleaning",
+         "4. Dimensionality Reduction", "5. Model Building", "6. Evaluation"]
+page = st.sidebar.radio("Navigation", PAGES, index=0)
+
+# ================================================================== #
+# 1. UPLOAD DATA
+# ================================================================== #
 if page == "1. Upload Data":
     st.title("📤 Upload Train and Test CSV Files")
-    with st.expander("ℹ Instructions"):
-        st.write("Upload your training (train.csv) and test (test.csv) data with the 'satisfaction' column.")
+
+    with st.expander("Instructions"):
+        st.markdown("""
+        • Upload training and testing CSV files.  
+        • Each file **must contain** a **`satisfaction`** column.
+        """)
+
     col1, col2 = st.columns(2)
     with col1:
-        train_file = st.file_uploader("Upload train.csv", type=["csv"], key="train_upload")
+        train_file = st.file_uploader("Train CSV", type="csv")
     with col2:
-        test_file = st.file_uploader("Upload test.csv", type=["csv"], key="test_upload")
+        test_file = st.file_uploader("Test CSV", type="csv")
 
     if train_file and test_file:
         try:
             st.session_state.train_df = fix_dataframe_types(pd.read_csv(train_file))
-            st.session_state.test_df = fix_dataframe_types(pd.read_csv(test_file))
-            st.success("Files uploaded successfully!")
-            st.subheader("Train Set Preview")
-            safe_dataframe_display(st.session_state.train_df)
-            st.subheader("Test Set Preview")
-            safe_dataframe_display(st.session_state.test_df)
-            if 'satisfaction' not in st.session_state.train_df.columns:
-                st.error("❌ 'satisfaction' column not found in training data!")
-            if 'satisfaction' not in st.session_state.test_df.columns:
-                st.error("❌ 'satisfaction' column not found in test data!")
-        except Exception as e:
-            st.error(f"Error loading files: {str(e)}")
+            st.session_state.test_df  = fix_dataframe_types(pd.read_csv(test_file))
 
-# PAGE 2: EDA
+            st.success("Files uploaded!")
+
+            st.subheader("Train preview")
+            safe_dataframe_display(st.session_state.train_df)
+
+            st.subheader("Test preview")
+            safe_dataframe_display(st.session_state.test_df)
+
+            if "satisfaction" not in st.session_state.train_df.columns:
+                st.error("`satisfaction` column missing in TRAIN file.")
+            if "satisfaction" not in st.session_state.test_df.columns:
+                st.error("`satisfaction` column missing in TEST file.")
+        except Exception as e:
+            st.exception(e)
+
+# ================================================================== #
+# 2. EDA
+# ================================================================== #
 elif page == "2. EDA":
     st.title("🔍 Exploratory Data Analysis")
-    if st.session_state.train_df is not None:
-        df = fix_dataframe_types(st.session_state.train_df)
-        with st.expander("📊 Dataset Overview"):
-            st.write(f"Rows: {df.shape[0]}, Columns: {df.shape[1]}")
-            st.write(df.dtypes)
-        with st.expander("Summary Statistics"):
-            st.dataframe(df.describe(include='all'))
-        with st.expander("Target Variable Analysis"):
-            if 'satisfaction' in df.columns:
-                fig = px.histogram(df, x='satisfaction', color='satisfaction', title='Distribution of Satisfaction')
-                st.plotly_chart(fig)
-            else:
-                st.error("Target column 'satisfaction' not found!")
-        with st.expander("Distributions"):
-            numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-            if numeric_cols:
-                selected = st.multiselect("Select numeric columns to plot", options=numeric_cols, default=numeric_cols[:3])
-                for col in selected:
-                    fig, ax = plt.subplots()
-                    sns.histplot(df[col], kde=True, ax=ax)
-                    st.pyplot(fig)
-            else:
-                st.warning("No numeric columns for distributions")
-        with st.expander("Correlation Matrix"):
-            numeric_df = df.select_dtypes(include=np.number)
-            if len(numeric_df.columns) > 0:
-                st.plotly_chart(px.imshow(numeric_df.corr()))
-        with st.expander("Pair Relationships"):
-            numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-            if len(numeric_cols) > 1:
-                pairplot_cols = st.multiselect("Select columns (max 5)", numeric_cols, default=numeric_cols[:2])
-                if 2 <= len(pairplot_cols) <= 5:
-                    st.plotly_chart(px.scatter_matrix(df, dimensions=pairplot_cols, color='satisfaction' if 'satisfaction' in df.columns else None))
-                else:
-                    st.warning("Select 2-5 columns")
-    else:
-        st.warning("Please upload data first.")
+    if st.session_state.train_df is None:
+        st.warning("Upload data first.")
+        st.stop()
 
-# PAGE 3: Data Cleaning
-elif page == "3. Data Cleaning":
-    st.title("🧹 Data Cleaning and Outlier Handling")
-    if st.session_state.train_df is not None:
-        df = fix_dataframe_types(st.session_state.train_df.copy())
-        with st.expander("Missing Value Analysis"):
-            missing_values = df.isnull().sum()
-            missing_values = missing_values[missing_values > 0]
-            if not missing_values.empty:
-                st.write("Columns with missing values:")
-                st.dataframe(missing_values.rename('Missing Values'))
-                st.subheader("Missing Value Treatment")
-                missing_strategy = st.radio("Handle missing values?", ['delete', 'mean', 'median', 'specific'], horizontal=True)
-                missing_value = st.text_input("Value to fill:", value="") if missing_strategy == 'specific' else None
-            else:
-                missing_strategy, missing_value = 'mean', None
-                st.info("No missing values.")
-        with st.expander("Outlier Analysis"):
-            numeric_cols = df.select_dtypes(include=np.number).columns
-            if len(numeric_cols) > 0:
-                outliers_report = []
-                for col in numeric_cols:
-                    q1, q3 = df[col].quantile([0.25, 0.75])
-                    iqr = q3 - q1
-                    lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-                    n_outliers = ((df[col] < lower) | (df[col] > upper)).sum()
-                    if n_outliers > 0:
-                        outliers_report.append({'Column': col, 'Outliers': n_outliers, 'Perc': f"{n_outliers / len(df) * 100:.1f}%"})
-                if outliers_report:
-                    outliers_df = pd.DataFrame(outliers_report)
-                    st.dataframe(outliers_df)
-                    st.subheader("Outlier Visualization")
-                    plot_boxplots(df, "Boxplots Before Outlier Treatment")
-                    st.subheader("Outlier Treatment")
-                    outlier_strategy = st.radio("Handle outliers?", ['ignore', 'remove', 'cap'], horizontal=True)
-                    iqr_multiplier = st.slider("IQR multiplier", 1.0, 5.0, 1.5, 0.1)
-                else:
-                    st.info("No outlier columns detected.")
-                    outlier_strategy, iqr_multiplier = 'ignore', 1.5
-            else:
-                outlier_strategy, iqr_multiplier = 'ignore', 1.5
-        if st.button("Apply Data Cleaning"):
-            with st.spinner("Cleaning data..."):
-                cleaned_train = preprocess_data(df, missing_strategy, missing_value, outlier_strategy, iqr_multiplier)
-                cleaned_test = preprocess_data(
-                    st.session_state.test_df,
-                    'mean' if missing_strategy == 'delete' else missing_strategy,
-                    missing_value,
-                    'ignore'
-                )
-                st.session_state.cleaned_train = cleaned_train
-                st.session_state.cleaned_test = cleaned_test
-                st.success("Done!")
-                st.write("New shape:", cleaned_train.shape)
-                if outlier_strategy != 'ignore':
-                    plot_boxplots(cleaned_train, "Boxplots After Outlier Treatment")
-    else:
-        st.warning("Please upload data first.")
+    df = st.session_state.train_df
 
-# PAGE 4: Dimensionality Reduction
-elif page == "4. Dimensionality Reduction":
-    st.title("📉 Dimensionality Reduction")
-    if st.session_state.cleaned_train is not None:
-        df_train = st.session_state.cleaned_train
-        df_test = st.session_state.cleaned_test
-        numeric_features = df_train.select_dtypes(include=np.number).columns.tolist()
-        if len(numeric_features) > 1:
-            st.write("Numeric features available for PCA:", numeric_features)
-            X_train = df_train[numeric_features].copy()
-            y_train = df_train['satisfaction']
-            X_test = df_test[numeric_features].copy()
-            y_test = df_test['satisfaction']
-            scaler = StandardScaler()
-            X_train_scaled = scaler.fit_transform(X_train)
-            X_test_scaled = scaler.transform(X_test)
-            pca = PCA().fit(X_train_scaled)
-            fig, ax = plt.subplots()
-            ax.plot(np.cumsum(pca.explained_variance_ratio_))
-            ax.axhline(y=0.95, color='r', linestyle='--', label='95% Variance')
-            ax.set_xlabel('Number of Components')
-            ax.set_ylabel('Cumulative Explained Variance')
-            ax.set_title('PCA Explained Variance')
-            ax.legend()
-            st.pyplot(fig)
-            n_components = st.slider("Number of PCA components", 1, min(20, len(numeric_features)), min(10, len(numeric_features)))
-            pca = PCA(n_components=n_components)
-            st.session_state.X_train_pca = pca.fit_transform(X_train_scaled)
-            st.session_state.X_test_pca = pca.transform(X_test_scaled)
-            st.session_state.y_train = y_train
-            st.session_state.y_test = y_test
-            st.success(f"PCA applied: {X_train.shape[1]} → {n_components}")
+    # --- overview
+    with st.expander("Dataset overview", expanded=True):
+        st.write(f"Shape: **{df.shape[0]} rows × {df.shape[1]} cols**")
+        st.dataframe(df.dtypes.rename("dtype"))
+
+    # --- numeric distrib
+    with st.expander("Numeric distributions"):
+        num_cols = df.select_dtypes(include=np.number).columns.tolist()
+        if num_cols:
+            sel = st.multiselect("Choose numeric columns", num_cols, num_cols[:4])
+            for c in sel:
+                fig, ax = plt.subplots()
+                sns.histplot(df[c], kde=True, ax=ax)
+                ax.set_title(c)
+                st.pyplot(fig)
         else:
-            st.warning("Not enough numeric features for PCA")
-    else:
-        st.warning("Please complete data cleaning first.")
+            st.info("No numeric columns.")
+
+    # --- correlation
+    with st.expander("Correlation matrix"):
+        num_df = df.select_dtypes(include=np.number)
+        if not num_df.empty:
+            corr = num_df.corr()
+            st.plotly_chart(px.imshow(corr,
+                                      labels=dict(color="corr"),
+                                      x=corr.columns, y=corr.columns),
+                            use_container_width=True)
+
+# ================================================================== #
+# 3. DATA CLEANING
+# ================================================================== #
+elif page == "3. Data Cleaning":
+    st.title("🧹 Data Cleaning & Outlier Handling")
+    if st.session_state.train_df is None:
+        st.warning("Upload data first.")
+        st.stop()
+
+    df = st.session_state.train_df
+
+    # ---- missing values pane -------------------------------------------
+    with st.expander("Missing-value handling", expanded=True):
+        miss = df.isnull().sum()
+        miss = miss[miss > 0]
+        if miss.empty:
+            st.success("No missing values 🎉")
+            missing_strategy = "none"
+            missing_value = None
+        else:
+            st.dataframe(miss.rename("n_missing"))
+            missing_strategy = st.radio("Strategy",
+                                        ["delete", "mean", "median", "specific"])
+            missing_value = None
+            if missing_strategy == "specific":
+                missing_value = st.text_input("Fill with:")
+
+    # ---- outlier pane ---------------------------------------------------
+    with st.expander("Outlier analysis", expanded=True):
+        num_cols = df.select_dtypes(include=np.number).columns
+        if num_cols.empty:
+            st.info("No numeric columns.")
+            outlier_strategy = "ignore"
+            iqr_mult = 1.5
+        else:
+            # report
+            out = []
+            for c in num_cols:
+                q1, q3 = df[c].quantile([0.25, 0.75])
+                iqr = q3 - q1
+                low, high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+                n_out = ((df[c] < low) | (df[c] > high)).sum()
+                if n_out:
+                    out.append((c, n_out, n_out / len(df) * 100))
+            if out:
+                st.dataframe(pd.DataFrame(out, columns=["column", "n_out", "%"]))
+                plot_boxplots(df, "Boxplots before treatment")
+                outlier_strategy = st.radio("Outlier strategy",
+                                            ["ignore", "remove", "cap"])
+                iqr_mult = st.slider("IQR multiplier", 1.0, 5.0, 1.5, 0.1)
+            else:
+                st.success("No sizeable outliers detected.")
+                outlier_strategy = "ignore"
+                iqr_mult = 1.5
+
+    # ---- apply button ---------------------------------------------------
+    if st.button("Apply cleaning"):
+        with st.spinner("Cleaning…"):
+            st.session_state.cleaned_train = preprocess_data(
+                df,
+                missing_strategy=missing_strategy if miss.empty is False else "mean",
+                missing_value=missing_value,
+                outlier_strategy=outlier_strategy,
+                outlier_threshold=iqr_mult
+            )
+            st.session_state.cleaned_test = preprocess_data(
+                st.session_state.test_df,
+                missing_strategy="mean",
+                outlier_strategy="ignore"
+            )
+        st.success("Cleaning done!")
+
+# ================================================================== #
+# 4. PCA
+# ================================================================== #
+elif page == "4. Dimensionality Reduction":
+    st.title("📉 PCA")
+    if st.session_state.cleaned_train is None:
+        st.warning("Run data-cleaning first.")
+        st.stop()
+
+    trn = st.session_state.cleaned_train
+    tst = st.session_state.cleaned_test
+    num_cols = trn.select_dtypes(include=np.number).columns.tolist()
+
+    if len(num_cols) < 2:
+        st.warning("Need at least two numeric features.")
+        st.stop()
+
+    # scale & PCA
+    scaler = StandardScaler()
+    X_trn = scaler.fit_transform(trn[num_cols])
+    X_tst = scaler.transform(tst[num_cols])
+
+    pca_full = PCA().fit(X_trn)
+    fig, ax = plt.subplots()
+    ax.plot(np.cumsum(pca_full.explained_variance_ratio_))
+    ax.axhline(0.95, ls="--", c="r")
+    ax.set_xlabel("#components")
+    ax.set_ylabel("cumulative explained var.")
+    st.pyplot(fig)
+
+    n_comp = st.slider("Components", 1, min(len(num_cols), 20), 10)
+    pca = PCA(n_components=n_comp)
+    st.session_state.X_train_pca = pca.fit_transform(X_trn)
+    st.session_state.X_test_pca  = pca.transform(X_tst)
+    st.session_state.y_train = trn["satisfaction"].values
+    st.session_state.y_test  = tst["satisfaction"].values
+
+    st.success(f"PCA reduced from {len(num_cols)} → {n_comp} features.")
 
 # ================================================================== #
 # 5. MODEL TRAINING
