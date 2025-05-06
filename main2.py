@@ -121,7 +121,30 @@ page = st.sidebar.radio("Navigation", [
     "5. Model Building",
     "6. Evaluation"
 ])
+def fix_dataframe_types(df):
+    """Convert DataFrame columns to Arrow-compatible types"""
+    df = df.copy()
+    
+    # Convert object/string columns
+    for col in df.select_dtypes(include=['object', 'string']).columns:
+        df[col] = df[col].astype('str')
+    
+    # Convert integer columns
+    for col in df.select_dtypes(include=['int64', 'Int64']).columns:
+        df[col] = df[col].astype('float64')  # PyArrow handles float64 better
+    
+    # Convert categorical columns
+    for col in df.select_dtypes(include='category').columns:
+        df[col] = df[col].astype('str')
+    
+    # Specific fixes for known problematic columns
+    if 'Gender' in df.columns:
+        df['Gender'] = df['Gender'].map({'Female': 0, 'Male': 1}).astype('float64')
+    
+    return df
 
+df_train = fix_dataframe_types(df_train)
+df_test=fix_dataframe_types(df_test)
 if page == "1. Upload Data":
     st.title("Upload Train and Test CSV Files")
     train_file = st.file_uploader("Upload train.csv", type=["csv"])
@@ -389,8 +412,9 @@ elif page == "3. Data Cleaning":
 elif page == "4. Dimensionality Reduction":
     st.title("Feature Selection and Dimensionality Reduction")
     if 'cleaned_train' in st.session_state:
-        df_train = st.session_state.cleaned_train
-        df_test = st.session_state.cleaned_test
+        df_train = fix_dataframe_types(st.session_state.cleaned_train)
+        df_test = fix_dataframe_types(st.session_state.cleaned_test)
+
         
         # Initialize variables with None
         corr_with_target = None
@@ -423,7 +447,14 @@ elif page == "4. Dimensionality Reduction":
                 st.dataframe(corr_with_target.rename("Correlation").sort_values(ascending=False))
             else:
                 st.error(f"Target column '{target_col}' is not numeric. Please encode it first.")
-        
+          # Ensure target is numeric
+        if not np.issubdtype(df_train[target_col].dtype, np.number):
+            try:
+                df_train[target_col] = pd.to_numeric(df_train[target_col])
+                df_test[target_col] = pd.to_numeric(df_test[target_col])
+            except Exception as e:
+                st.error(f"Could not convert target column to numeric: {e}")
+                return
         st.subheader("Feature Selection")
         corr_threshold = st.slider("Select correlation threshold for feature selection", 
                                   min_value=0.0, max_value=1.0, value=0.1, step=0.01)
