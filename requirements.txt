@@ -1,8 +1,9 @@
-streamlit
-pandas
-numpy
-matplotlib
-seaborn
-plotly
-scikit-learn
-scipy
+streamlit>=1.13.0
+pandas>=1.5.0
+numpy>=1.22.0
+scikit-learn>=1.2.0
+plotly>=5.11.0
+matplotlib>=3.6.0
+seaborn>=0.12.0
+scipy>=1.9.0
+pyarrow>=9.0.0
