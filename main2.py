@@ -454,7 +454,6 @@ elif page == "4. Dimensionality Reduction":
                 df_test[target_col] = pd.to_numeric(df_test[target_col])
             except Exception as e:
                 st.error(f"Could not convert target column to numeric: {e}")
-                return
         st.subheader("Feature Selection")
         corr_threshold = st.slider("Select correlation threshold for feature selection", 
                                   min_value=0.0, max_value=1.0, value=0.1, step=0.01)
