@@ -314,7 +314,7 @@ elif page == "3. Data Cleaning":
             
             # Interactive table with Plotly
             fig = go.Figure(data=[go.Table(
-                header=dict(values=list(outliers_df.columns),
+                header=dict(values=list(outliers_df.columns)),
                 cells=dict(values=[outliers_df[col] for col in outliers_df.columns])
             )
             st.plotly_chart(fig, use_container_width=True)
