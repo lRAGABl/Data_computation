@@ -298,16 +298,28 @@ elif page == "4. Dimensionality Reduction":
 
     trn = st.session_state.cleaned_train
     tst = st.session_state.cleaned_test
+
     num_cols = trn.select_dtypes(include=np.number).columns.tolist()
 
+    # Defensive checks!
     if len(num_cols) < 2:
-        st.warning("Need at least two numeric features.")
+        st.warning("Need at least two numeric features after cleaning.")
+        st.stop()
+    if trn.empty:
+        st.error("Your training data is now empty. Loosen your missing/outlier settings.")
+        st.stop()
+    if tst is not None and tst.empty:
+        st.warning("Your test set is empty after cleaning!")
         st.stop()
 
     # scale & PCA
     scaler = StandardScaler()
-    X_trn = scaler.fit_transform(trn[num_cols])
-    X_tst = scaler.transform(tst[num_cols])
+    try:
+        X_trn = scaler.fit_transform(trn[num_cols])
+        X_tst = scaler.transform(tst[num_cols])
+    except ValueError as err:
+        st.error(f"Could not scale data: {err}")
+        st.stop()
 
     pca_full = PCA().fit(X_trn)
     fig, ax = plt.subplots()
