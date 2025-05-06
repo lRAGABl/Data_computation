@@ -15,6 +15,7 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from scipy import stats
 from sklearn.feature_selection import SelectKBest, f_classif
 import io
+import pyarrow as pa
 
 st.set_page_config(page_title="Airline Satisfaction SVM", layout="wide")
 
@@ -81,6 +82,16 @@ def preprocess_data(df, missing_strategy='mean', missing_value=None, outlier_str
                                   np.where(df[col] < lower, lower, df[col]))
 
     return df, missing_cols, outliers_info
+
+# Ensure all data is serializable
+def safe_serialize(df):
+    """Convert DataFrame to Arrow-compatible types"""
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            df[col] = df[col].astype('str')  # Convert objects to strings
+        elif pd.api.types.is_categorical_dtype(df[col]):
+            df[col] = df[col].astype('str')
+    return df
 
 def plot_boxplots(df, title):
     numeric_cols = df.select_dtypes(include=np.number).columns
@@ -272,59 +283,108 @@ elif page == "3. Data Cleaning":
             if missing_strategy == 'specific':
                 missing_value = st.text_input("Enter the value to fill missing values with")
             
-            st.subheader("Outlier Analysis")
-            numeric_cols = df.select_dtypes(include=np.number).columns
-            z_scores = np.abs(stats.zscore(df[numeric_cols]))
-            outliers = (z_scores > 3).sum(axis=0)
-            outliers = outliers[outliers > 0]
+        st.subheader("Outlier Analysis")
+        
+        # 1. SAFER Outlier Detection using IQR (more robust than Z-score)
+        numeric_cols = df.select_dtypes(include=np.number).columns
+        outliers_report = []
+        
+        for col in numeric_cols:
+            q1 = df[col].quantile(0.25)
+            q3 = df[col].quantile(0.75)
+            iqr = q3 - q1
+            lower_bound = q1 - 1.5*iqr
+            upper_bound = q3 + 1.5*iqr
             
-            if outliers.size > 0:
-                st.write("Outliers detected in columns:")
-                st.dataframe(outliers.rename('Outlier Count'))
-                st.write(f"Total outliers detected: {outliers.sum()}")
+            # Count outliers
+            n_outliers = ((df[col] < lower_bound) | (df[col] > upper_bound)).sum()
+            if n_outliers > 0:
+                outliers_report.append({
+                    'Column': col,
+                    'Outliers': n_outliers,
+                    'Percentage': f"{n_outliers/len(df)*100:.1f}%",
+                    'Min': df[col].min(),
+                    'Max': df[col].max()
+                })
+        
+        # 2. Enhanced Display
+        if outliers_report:
+            outliers_df = pd.DataFrame(outliers_report)
+            st.write("Outliers detected in columns:")
+            
+            # Interactive table with Plotly
+            fig = go.Figure(data=[go.Table(
+                header=dict(values=list(outliers_df.columns),
+                cells=dict(values=[outliers_df[col] for col in outliers_df.columns])
+            ])
+            st.plotly_chart(fig, use_container_width=True)
+            
+            st.write(f"Total outliers detected: {outliers_df['Outliers'].sum()}")
+            
+            # 3. Visualizations
+            with st.expander("📊 Detailed Outlier Visualizations"):
+                col1, col2 = st.columns(2)
                 
-                st.subheader("Outlier Visualization (Before Treatment)")
-                plot_boxplots(df, "Boxplots Before Outlier Treatment")
-                
+                with col1:
+                    st.subheader("Before Treatment")
+                    plot_boxplots(df, "Boxplots Before Treatment")
+                    
+                # 4. Outlier Treatment Options
                 st.subheader("Outlier Treatment")
-                outlier_strategy = st.radio("How would you like to handle outliers?",
-                                           ['ignore', 'remove', 'cap'])
-                
-                outlier_threshold = st.slider("Select z-score threshold for outliers", 
-                                             min_value=1.0, max_value=5.0, value=3.0, step=0.5)
-                
-                # Process data with selected strategies
-                cleaned_train, missing_cols, outliers_info = preprocess_data(
-                    st.session_state.train_df,
-                    missing_strategy=missing_strategy,
-                    missing_value=missing_value,
-                    outlier_strategy=outlier_strategy,
-                    outlier_threshold=outlier_threshold
+                treatment_method = st.radio(
+                    "Treatment Method",
+                    options=[
+                        "Keep (no change)",
+                        "Remove outliers",
+                        "Cap at boundaries"
+                    ],
+                    index=0
                 )
                 
-                # Process test data with same strategies (except deletion)
-                cleaned_test, _, _ = preprocess_data(
-                    st.session_state.test_df,
-                    missing_strategy='mean' if missing_strategy == 'delete' else missing_strategy,
-                    missing_value=missing_value,
-                    outlier_strategy='ignore'  # Don't remove outliers from test set
+                threshold = st.slider(
+                    "IQR Multiplier for boundary calculation",
+                    min_value=1.0,
+                    max_value=5.0,
+                    value=1.5,
+                    step=0.5,
+                    help="Lower values detect more outliers"
                 )
                 
-                st.success("Data cleaning completed!")
-                st.write("New train shape:", cleaned_train.shape)
-                
-                if outlier_strategy != 'ignore':
-                    st.subheader("Outlier Visualization (After Treatment)")
-                    plot_boxplots(cleaned_train, "Boxplots After Outlier Treatment")
-                
-                st.session_state.cleaned_train = cleaned_train
-                st.session_state.cleaned_test = cleaned_test
-            else:
-                st.info("No outliers detected in the data.")
+                # 5. Process Data
+                if st.button("Apply Treatment"):
+                    with st.spinner("Processing data..."):
+                        cleaned_train = df.copy()
+                        
+                        if treatment_method == "Remove outliers":
+                            mask = pd.Series(True, index=df.index)
+                            for col in numeric_cols:
+                                q1 = df[col].quantile(0.25)
+                                q3 = df[col].quantile(0.75)
+                                iqr = q3 - q1
+                                col_mask = (df[col] >= q1 - threshold*iqr) & (df[col] <= q3 + threshold*iqr)
+                                mask &= col_mask
+                            cleaned_train = df[mask].copy()
+                            
+                        elif treatment_method == "Cap at boundaries":
+                            for col in numeric_cols:
+                                q1 = df[col].quantile(0.25)
+                                q3 = df[col].quantile(0.75)
+                                iqr = q3 - q1
+                                lower = q1 - threshold*iqr
+                                upper = q3 + threshold*iqr
+                                cleaned_train[col] = cleaned_train[col].clip(lower, upper)
+                        
+                        # Update session state
+                        st.session_state.cleaned_train = cleaned_train
+                        st.session_state.cleaned_test = st.session_state.test_df.copy()  # No outlier treatment for test set
+                        
+                        st.success(f"Treatment applied! New shape: {cleaned_train.shape}")
+                        
+                        with col2:
+                            st.subheader("After Treatment")
+                            plot_boxplots(cleaned_train, "Boxplots After Treatment")
         else:
-            st.info("No missing values found in the dataset.")
-    else:
-        st.warning("Please upload data first.")
+            st.info("✅ No significant outliers detected using IQR method.")
 
 elif page == "4. Dimensionality Reduction":
     st.title("Feature Selection and Dimensionality Reduction")
