@@ -392,6 +392,10 @@ elif page == "4. Dimensionality Reduction":
         df_train = st.session_state.cleaned_train
         df_test = st.session_state.cleaned_test
         
+        # Initialize variables with None
+        corr_with_target = None
+        selected_features = []
+        
         st.subheader("Feature-Target Correlation")
         
         # 1. First check if target column exists
@@ -409,7 +413,7 @@ elif page == "4. Dimensionality Reduction":
                 
                 # Create correlation plot
                 fig, ax = plt.subplots(figsize=(10, 6))
-                corr_with_target = corr_matrix[target_col].drop(target_col)
+                corr_with_target = corr_matrix[target_col].drop(target_col, errors='ignore')
                 corr_with_target.sort_values().plot(kind='barh', ax=ax)
                 ax.set_title(f"Feature Correlation with {target_col}")
                 ax.set_xlabel("Correlation Coefficient")
@@ -418,19 +422,30 @@ elif page == "4. Dimensionality Reduction":
                 # Show correlation table
                 st.dataframe(corr_with_target.rename("Correlation").sort_values(ascending=False))
             else:
-                st.error(f"Target column '{target_col}' is not numeric. Please encode it first.")
-
+                st.error(f"Target column '{target_col}' is not numeric. Please encode it first.")
         
         st.subheader("Feature Selection")
         corr_threshold = st.slider("Select correlation threshold for feature selection", 
                                   min_value=0.0, max_value=1.0, value=0.1, step=0.01)
         
-        selected_features = corr_with_target[corr_with_target > corr_threshold].index.tolist()
-        if 'satisfaction' in selected_features:
-            selected_features.remove('satisfaction')
-        
-        st.write(f"Selected {len(selected_features)} features with correlation > {corr_threshold}")
-        st.write("Selected features:", selected_features)
+        if corr_with_target is not None:
+            selected_features = corr_with_target[corr_with_target.abs() > corr_threshold].index.tolist()
+            
+            # Remove target if it exists in selected features
+            if target_col in selected_features:
+                selected_features.remove(target_col)
+            
+            if len(selected_features) > 0:
+                st.write(f"Selected {len(selected_features)} features with correlation > {corr_threshold}")
+                st.write("Selected features:", selected_features)
+            else:
+                st.warning(f"No features meet the correlation threshold of {corr_threshold}")
+                # Fallback to all numeric features if none selected
+                selected_features = [col for col in numeric_cols if col != target_col]
+                st.info(f"Using all available numeric features instead: {selected_features}")
+        else:
+            st.warning("Could not calculate feature correlations. Using all numeric features.")
+            selected_features = [col for col in numeric_cols if col != target_col]
         
         st.session_state.selected_features = selected_features
         
@@ -440,48 +455,56 @@ elif page == "4. Dimensionality Reduction":
             with col1:
                 x_axis = st.selectbox("X-axis feature", selected_features, index=0)
             with col2:
-                y_axis = st.selectbox("Y-axis feature", selected_features, index=1)
+                y_axis = st.selectbox("Y-axis feature", selected_features, index=min(1, len(selected_features)-1))
             
-            fig = px.scatter(df_train, x=x_axis, y=y_axis, color='satisfaction',
-                             title=f"{x_axis} vs {y_axis} colored by Satisfaction")
+            fig = px.scatter(df_train, x=x_axis, y=y_axis, color=target_col,
+                             title=f"{x_axis} vs {y_axis} colored by {target_col}")
             st.plotly_chart(fig)
+        else:
+            st.warning("Need at least 2 features to create scatter plot")
         
         st.subheader("PCA Dimensionality Reduction")
-        X_train = df_train[selected_features]
-        y_train = df_train['satisfaction']
-        X_test = df_test[selected_features]
-        y_test = df_test['satisfaction']
-        
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-        
-        pca = PCA()
-        pca.fit(X_train_scaled)
-        
-        fig, ax = plt.subplots()
-        ax.plot(np.cumsum(pca.explained_variance_ratio_))
-        ax.axhline(y=0.95, color='r', linestyle='--')
-        ax.set_xlabel('Number of Components')
-        ax.set_ylabel('Cumulative Explained Variance')
-        ax.set_title('PCA Explained Variance')
-        st.pyplot(fig)
-        
-        n_components = st.slider("Select number of PCA components", 
-                                min_value=1, max_value=len(selected_features), 
-                                value=min(10, len(selected_features)))
-        
-        pca = PCA(n_components=n_components)
-        X_train_pca = pca.fit_transform(X_train_scaled)
-        X_test_pca = pca.transform(X_test_scaled)
-        
-        st.session_state.X_train_pca = X_train_pca
-        st.session_state.X_test_pca = X_test_pca
-        st.session_state.y_train = y_train
-        st.session_state.y_test = y_test
-        
-        st.success(f"PCA applied: Reduced from {X_train.shape[1]} to {X_train_pca.shape[1]} components")
-        
+        if len(selected_features) > 0:
+            try:
+                X_train = df_train[selected_features]
+                y_train = df_train[target_col]
+                X_test = df_test[selected_features]
+                y_test = df_test[target_col]
+                
+                scaler = StandardScaler()
+                X_train_scaled = scaler.fit_transform(X_train)
+                X_test_scaled = scaler.transform(X_test)
+                
+                pca = PCA()
+                pca.fit(X_train_scaled)
+                
+                fig, ax = plt.subplots()
+                ax.plot(np.cumsum(pca.explained_variance_ratio_))
+                ax.axhline(y=0.95, color='r', linestyle='--')
+                ax.set_xlabel('Number of Components')
+                ax.set_ylabel('Cumulative Explained Variance')
+                ax.set_title('PCA Explained Variance')
+                st.pyplot(fig)
+                
+                max_components = min(20, len(selected_features))  # Limit to 20 max for performance
+                n_components = st.slider("Select number of PCA components", 
+                                        min_value=1, max_value=max_components, 
+                                        value=min(10, max_components))
+                
+                pca = PCA(n_components=n_components)
+                X_train_pca = pca.fit_transform(X_train_scaled)
+                X_test_pca = pca.transform(X_test_scaled)
+                
+                st.session_state.X_train_pca = X_train_pca
+                st.session_state.X_test_pca = X_test_pca
+                st.session_state.y_train = y_train
+                st.session_state.y_test = y_test
+                
+                st.success(f"PCA applied: Reduced from {X_train.shape[1]} to {X_train_pca.shape[1]} components")
+            except Exception as e:
+                st.error(f"Error in PCA calculation: {str(e)}")
+        else:
+            st.error("No features available for PCA")
     else:
         st.warning("Please complete data cleaning first.")
 
