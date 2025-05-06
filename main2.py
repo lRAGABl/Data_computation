@@ -278,7 +278,7 @@ elif page == "3. Data Cleaning":
             outliers = (z_scores > 3).sum(axis=0)
             outliers = outliers[outliers > 0]
             
-            if not outliers.empty:
+            if outliers.size > 0:
                 st.write("Outliers detected in columns:")
                 st.dataframe(outliers.rename('Outlier Count'))
                 st.write(f"Total outliers detected: {outliers.sum()}")
