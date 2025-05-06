@@ -394,81 +394,95 @@ elif page == "4. Dimensionality Reduction":
         df_train = st.session_state.cleaned_train
         df_test = st.session_state.cleaned_test
         
+        # First check if the satisfaction column exists
+        if 'satisfaction' not in df_train.columns:
+            st.error("The 'satisfaction' column is missing from the cleaned data. Please go back to the data cleaning step.")
+            st.stop()
+        
         st.subheader("Feature-Target Correlation")
-        numeric_cols = df_train.select_dtypes(include=np.number).columns.drop('satisfaction', errors='ignore')
-        corr_with_target = df_train[numeric_cols].corr()['satisfaction'].abs().sort_values(ascending=False)
+        # Make sure to include all numeric columns INCLUDING 'satisfaction'
+        all_numeric_cols = df_train.select_dtypes(include=np.number).columns
         
-        fig, ax = plt.subplots(figsize=(10, 6))
-        corr_with_target.drop('satisfaction').plot(kind='bar', ax=ax)
-        ax.set_title("Feature Correlation with Target")
-        ax.set_ylabel("Absolute Correlation Coefficient")
-        st.pyplot(fig)
+        # Calculate correlations including 'satisfaction'
+        correlation_matrix = df_train[all_numeric_cols].corr()
         
-        st.subheader("Feature Selection")
-        corr_threshold = st.slider("Select correlation threshold for feature selection", 
-                                  min_value=0.0, max_value=1.0, value=0.1, step=0.01)
-        
-        selected_features = corr_with_target[corr_with_target > corr_threshold].index.tolist()
-        if 'satisfaction' in selected_features:
-            selected_features.remove('satisfaction')
-        
-        st.write(f"Selected {len(selected_features)} features with correlation > {corr_threshold}")
-        st.write("Selected features:", selected_features)
-        
-        st.session_state.selected_features = selected_features
-        
-        st.subheader("Interactive Scatter Plot")
-        if len(selected_features) >= 2:
-            col1, col2 = st.columns(2)
-            with col1:
-                x_axis = st.selectbox("X-axis feature", selected_features, index=0)
-            with col2:
-                y_axis = st.selectbox("Y-axis feature", selected_features, index=1)
+        # Check if 'satisfaction' is in the correlation matrix
+        if 'satisfaction' in correlation_matrix.columns:
+            corr_with_target = correlation_matrix['satisfaction'].abs().sort_values(ascending=False)
             
-            fig = px.scatter(df_train, x=x_axis, y=y_axis, color='satisfaction',
-                             title=f"{x_axis} vs {y_axis} colored by Satisfaction")
-            st.plotly_chart(fig)
-        
-        st.subheader("PCA Dimensionality Reduction")
-        X_train = df_train[selected_features]
-        y_train = df_train['satisfaction']
-        X_test = df_test[selected_features]
-        y_test = df_test['satisfaction']
-        
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-        
-        pca = PCA()
-        pca.fit(X_train_scaled)
-        
-        fig, ax = plt.subplots()
-        ax.plot(np.cumsum(pca.explained_variance_ratio_))
-        ax.axhline(y=0.95, color='r', linestyle='--')
-        ax.set_xlabel('Number of Components')
-        ax.set_ylabel('Cumulative Explained Variance')
-        ax.set_title('PCA Explained Variance')
-        st.pyplot(fig)
-        
-        n_components = st.slider("Select number of PCA components", 
-                                min_value=1, 
-                                max_value=min(len(selected_features), X_train.shape[1]), 
-                                value=min(10, len(selected_features)))
-        
-        pca = PCA(n_components=n_components)
-        X_train_pca = pca.fit_transform(X_train_scaled)
-        X_test_pca = pca.transform(X_test_scaled)
-        
-        st.session_state.X_train_pca = X_train_pca
-        st.session_state.X_test_pca = X_test_pca
-        st.session_state.y_train = y_train
-        st.session_state.y_test = y_test
-        
-        st.success(f"PCA applied: Reduced from {X_train.shape[1]} to {X_train_pca.shape[1]} components")
-        
+            fig, ax = plt.subplots(figsize=(10, 6))
+            # Drop satisfaction from the plot (not from the data)
+            if 'satisfaction' in corr_with_target.index:
+                corr_with_target = corr_with_target.drop('satisfaction')
+            corr_with_target.plot(kind='bar', ax=ax)
+            ax.set_title("Feature Correlation with Target")
+            ax.set_ylabel("Absolute Correlation Coefficient")
+            st.pyplot(fig)
+            
+            st.subheader("Feature Selection")
+            corr_threshold = st.slider("Select correlation threshold for feature selection", 
+                                    min_value=0.0, max_value=1.0, value=0.1, step=0.01)
+            
+            selected_features = corr_with_target[corr_with_target > corr_threshold].index.tolist()
+            
+            st.write(f"Selected {len(selected_features)} features with correlation > {corr_threshold}")
+            st.write("Selected features:", selected_features)
+            
+            st.session_state.selected_features = selected_features
+            
+            # Rest of the code...
+            st.subheader("Interactive Scatter Plot")
+            if len(selected_features) >= 2:
+                col1, col2 = st.columns(2)
+                with col1:
+                    x_axis = st.selectbox("X-axis feature", selected_features, index=0)
+                with col2:
+                    y_axis = st.selectbox("Y-axis feature", selected_features, index=1)
+                
+                fig = px.scatter(df_train, x=x_axis, y=y_axis, color='satisfaction',
+                                title=f"{x_axis} vs {y_axis} colored by Satisfaction")
+                st.plotly_chart(fig)
+            
+            st.subheader("PCA Dimensionality Reduction")
+            X_train = df_train[selected_features]
+            y_train = df_train['satisfaction']
+            X_test = df_test[selected_features]
+            y_test = df_test['satisfaction']
+            
+            scaler = StandardScaler()
+            X_train_scaled = scaler.fit_transform(X_train)
+            X_test_scaled = scaler.transform(X_test)
+            
+            pca = PCA()
+            pca.fit(X_train_scaled)
+            
+            fig, ax = plt.subplots()
+            ax.plot(np.cumsum(pca.explained_variance_ratio_))
+            ax.axhline(y=0.95, color='r', linestyle='--')
+            ax.set_xlabel('Number of Components')
+            ax.set_ylabel('Cumulative Explained Variance')
+            ax.set_title('PCA Explained Variance')
+            st.pyplot(fig)
+            
+            n_components = st.slider("Select number of PCA components", 
+                                    min_value=1, 
+                                    max_value=min(len(selected_features), X_train.shape[1]), 
+                                    value=min(10, len(selected_features)))
+            
+            pca = PCA(n_components=n_components)
+            X_train_pca = pca.fit_transform(X_train_scaled)
+            X_test_pca = pca.transform(X_test_scaled)
+            
+            st.session_state.X_train_pca = X_train_pca
+            st.session_state.X_test_pca = X_test_pca
+            st.session_state.y_train = y_train
+            st.session_state.y_test = y_test
+            
+            st.success(f"PCA applied: Reduced from {X_train.shape[1]} to {X_train_pca.shape[1]} components")
+        else:
+            st.error("'satisfaction' column is not available in the correlation matrix. Check data cleaning steps.")
     else:
         st.warning("Please complete data cleaning first.")
-
 elif page == "5. Model Building":
     st.title("SVM Model Training")
     if st.session_state.X_train_pca is not None:
