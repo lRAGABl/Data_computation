@@ -1,5 +1,4 @@
 import streamlit as st
-import time
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -11,14 +10,9 @@ from sklearn.impute import SimpleImputer
 from sklearn.decomposition import PCA
 from sklearn.svm import SVC
 from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, precision_score, recall_score
 from scipy import stats
-from sklearn.feature_selection import SelectKBest, f_classif
 import io
-import pyarrow as pa
-
-# Configure PyArrow for Streamlit compatibility
-pa.compat.set_use_pyarrow(False)
 
 # Set page config
 st.set_page_config(
@@ -38,10 +32,6 @@ def fix_dataframe_types(df):
     # Convert integer columns
     for col in df.select_dtypes(include=['int64', 'Int64']).columns:
         df[col] = df[col].astype('float64')
-    
-    # Convert categorical columns
-    for col in df.select_dtypes(include='category').columns:
-        df[col] = df[col].astype('str')
     
     # Specific fixes for known problematic columns
     if 'Gender' in df.columns:
