@@ -35,7 +35,11 @@ def safe_dataframe_display(df, max_rows=5):
     st.dataframe(display_df)
 
 # Initialize session state
-session_keys = ['train_df', 'test_df', 'X_train_pca', 'X_test_pca', 'y_train', 'y_test', 'model', 'cleaned_train', 'cleaned_test', 'selected_features']
+session_keys = [
+    'train_df', 'test_df', 'X_train_pca', 'X_test_pca', 
+    'y_train', 'y_test', 'model', 'cleaned_train', 
+    'cleaned_test', 'selected_features'
+]
 for key in session_keys:
     if key not in st.session_state:
         st.session_state[key] = None
@@ -288,14 +292,14 @@ elif page == "3. Data Cleaning":
                     q1 = df[col].quantile(0.25)
                     q3 = df[col].quantile(0.75)
                     iqr = q3 - q1
-                    lower = q1 - 1.5*iqr
-                    upper = q3 + 1.5*iqr
+                    lower = q1 - 1.5 * iqr
+                    upper = q3 + 1.5 * iqr
                     n_outliers = ((df[col] < lower) | (df[col] > upper)).sum()
                     if n_outliers > 0:
                         outliers_report.append({
                             'Column': col,
                             'Outliers': n_outliers,
-                            'Percentage': f"{n_outliers/len(df)*100:.1f}%"
+                            'Percentage': f"{n_outliers / len(df) * 100:.1f}%"
                         })
                 
                 if outliers_report:
