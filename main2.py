@@ -393,14 +393,33 @@ elif page == "4. Dimensionality Reduction":
         df_test = st.session_state.cleaned_test
         
         st.subheader("Feature-Target Correlation")
-        numeric_cols = df_train.select_dtypes(include=np.number).columns
-        corr_with_target = df_train[numeric_cols].corr()['satisfaction'].abs().sort_values(ascending=False)
         
-        fig, ax = plt.subplots(figsize=(10, 6))
-        corr_with_target.drop('satisfaction').plot(kind='bar', ax=ax)
-        ax.set_title("Feature Correlation with Target")
-        ax.set_ylabel("Absolute Correlation Coefficient")
-        st.pyplot(fig)
+        # 1. First check if target column exists
+        target_col = 'satisfaction'
+        if target_col not in df_train.columns:
+            st.error(f"Target column '{target_col}' not found in dataset. Available columns are: {list(df_train.columns)}")
+        else:
+            # 2. Get only numeric columns (excluding target if it's not numeric)
+            numeric_cols = df_train.select_dtypes(include=np.number).columns.tolist()
+            
+            # 3. Ensure target column is included if it's numeric
+            if target_col in numeric_cols:
+                # Calculate correlations
+                corr_matrix = df_train[numeric_cols].corr()
+                
+                # Create correlation plot
+                fig, ax = plt.subplots(figsize=(10, 6))
+                corr_with_target = corr_matrix[target_col].drop(target_col)
+                corr_with_target.sort_values().plot(kind='barh', ax=ax)
+                ax.set_title(f"Feature Correlation with {target_col}")
+                ax.set_xlabel("Correlation Coefficient")
+                st.pyplot(fig)
+                
+                # Show correlation table
+                st.dataframe(corr_with_target.rename("Correlation").sort_values(ascending=False))
+            else:
+                st.error(f"Target column '{target_col}' is not numeric. Please encode it first.")
+
         
         st.subheader("Feature Selection")
         corr_threshold = st.slider("Select correlation threshold for feature selection", 
