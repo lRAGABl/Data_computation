@@ -546,7 +546,7 @@ elif page == "4. Dimensionality Reduction":
                     min_value=1,
                     max_value=max_components,
                     value=min(10, max_components)
-                
+                )
                 # Apply PCA
                 pca = PCA(n_components=n_components)
                 X_train_pca = pca.fit_transform(X_train_scaled)
