@@ -91,7 +91,7 @@ def safe_serialize(df):
             df[col] = df[col].astype('str')  # Convert objects to strings
         elif pd.api.types.is_categorical_dtype(df[col]):
             df[col] = df[col].astype('str')
-    return df
+    return df
 
 def plot_boxplots(df, title):
     numeric_cols = df.select_dtypes(include=np.number).columns
